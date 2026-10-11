@@ -1,0 +1,21 @@
+# Data: reproducible from src/download_data.py, so never committed.
+# The .gitkeep exceptions keep the empty folders in the repo.
+data/raw/*
+data/processed/*
+!data/**/.gitkeep
+
+# Secrets
+.env
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+.vscode/
