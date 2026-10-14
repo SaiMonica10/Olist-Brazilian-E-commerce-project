@@ -1,0 +1,25 @@
+# Project database: PostgreSQL 16, separate from any Postgres installed on the host.
+# Values come from .env (copy .env.example to .env first).
+services:
+  db:
+    image: postgres:16
+    container_name: olist-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      # host:container. The host side is configurable because 5432 is often
+      # already taken by a locally installed Postgres.
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      # Named volume: data survives `docker compose down` and restarts.
+      - olist_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  olist_pgdata:
