@@ -11,11 +11,11 @@ Usage:
     uv run python src/load_to_postgres.py
 """
 
-import os
 from pathlib import Path
 
-from dotenv import load_dotenv 
-from sqlalchemy import URL, Connection, Engine, create_engine, text
+from sqlalchemy import Connection, text
+
+from db import get_engine
 
 RAW_DIR = Path(__file__).resolve().parent.parent / "data" / "raw"
 
@@ -132,21 +132,10 @@ TABLES = {
       
 }
 
-def get_engine() -> Engine:
-    load_dotenv()
-    
-    url = URL.create(
-        "postgresql+psycopg",
-        username=os.environ["POSTGRES_USER"],
-        password=os.environ["POSTGRES_PASSWORD"],
-        host=os.environ["POSTGRES_HOST"],
-        port=int(os.environ["POSTGRES_PORT"]),
-        database=os.environ["POSTGRES_DB"],
-    )
-    return create_engine(url)
-
 def load_table(conn: Connection, table: str, csv_name: str, columns: str) -> int:
-    conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
+    # CASCADE also drops views built on this table (e.g. order_delivery);
+    # re-create them afterwards by running the sql/ files in order.
+    conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
     conn.execute(text(f"CREATE TABLE {table} ({columns})"))
     
     # COPY streams the file straight into Postgres, which parses and type-checks
