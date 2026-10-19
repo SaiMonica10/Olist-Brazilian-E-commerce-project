@@ -3,7 +3,8 @@
 How much do late deliveries hurt review scores and repeat purchases, and can we
 flag at-risk orders at the time of purchase so operations can intervene?
 
-> **Status:** Phase 0 complete (database set up and raw data loaded). Analysis in progress.
+> **Status:** Phases 0–2 complete (data load, EDA, measurement). Phase 3
+> (purchase-time features) in progress.
 
 ## Problem
 
@@ -42,22 +43,80 @@ Notes:
 - Raw tables mirror the CSVs exactly; data-quality checks are in
   [`sql/00_sanity_checks.sql`](sql/00_sanity_checks.sql).
 
-<!-- TODO: after EDA, add the data-quality issues that shaped your decisions. -->
+Data-quality issues that shaped the analysis
+([notebook 01](notebooks/01_data_overview.ipynb)):
+
+- **Scope:** lateness is measured on the 96,470 orders that are `delivered`
+  and have a delivery date (97% of orders).
+- **Period:** purchases from Jan 2017 to Aug 2018. 2016 is too sparse (one
+  month has no orders), and Sep–Oct 2018 has no delivered orders.
+- **Out-of-order middle dates:** 1,373 delivered orders have approval or
+  carrier dates out of order. They are kept, because purchase and delivery
+  dates are always valid, so their late label is correct.
+- **Limitation:** most of the 1,107 `shipped` orders are old and were likely
+  never delivered. They are excluded, so measured lateness is slightly
+  optimistic.
 
 ## Approach
 
 <!-- TODO: fill in phase by phase as each one is done. -->
 
 - **Phase 0:** Postgres in Docker, raw load, sanity checks
-- **EDA:**
-- **Measurement:**
-- **Features and leakage control:**
+- **EDA:** which orders to analyse and how lateness varies over time and by
+  state ([01](notebooks/01_data_overview.ipynb),
+  [02](notebooks/02_delivery_lateness.ipynb)). "Late" is defined once, in
+  [`sql/01_order_delivery.sql`](sql/01_order_delivery.sql): delivered on a
+  later date than the estimated date.
+- **Measurement:** late vs. on-time orders compared on review score and
+  180-day repeat purchase, with 95% confidence intervals, a regression that
+  adjusts for customer state and purchase month, and a robustness check
+  ([03](notebooks/03_lateness_vs_reviews.ipynb),
+  [04](notebooks/04_lateness_vs_repeat.ipynb)). Outcomes are built in
+  [`sql/02_order_outcomes.sql`](sql/02_order_outcomes.sql).
+- **Features and leakage control:** one row per order with features known at
+  purchase time: promised delivery days, seller–customer distance, states,
+  basket contents, payment type, purchase time, and the seller's past late
+  rate ([`sql/03_order_features.sql`](sql/03_order_features.sql),
+  [notebook 05](notebooks/05_features.ipynb)). The seller's history counts
+  only orders already delivered *before* the purchase, so the model never
+  sees the future; a brute-force recount on 500 random orders matched
+  exactly. Post-purchase columns (approval, carrier and delivery dates,
+  shipping deadline, reviews) are excluded.
 - **Modeling:**
 - **Serving:** FastAPI prediction API, Streamlit dashboard
 
 ## Findings
 
-<!-- TODO: your findings, written after the analysis. Lead with numbers. -->
+**How often orders are late** ([02](notebooks/02_delivery_lateness.ipynb))
+
+- 6.8% of delivered orders arrive late. A typical order arrives 12 days
+  before its estimate, so Olist's estimates are generous.
+- Lateness comes in bursts: Nov 2017, Feb 2018 and Mar 2018 hold 48% of all
+  late orders.
+- The late rate varies by customer state, from 2.8% (AM) to 21.4% (AL).
+
+**Lateness and review scores** ([03](notebooks/03_lateness_vs_reviews.ipynb))
+
+- Late orders average **2.27 stars vs 4.29** for on-time orders, a gap of
+  **−2.02 stars**. Comparing orders from the same state and month, the gap is
+  still −1.96 (95% CI −2.00 to −1.92).
+- 53.8% of late orders get 1 star, vs 6.6% of on-time orders.
+- Most of the gap comes from reviews written while customers were still
+  waiting. Counting only reviews written after arrival, the gap is
+  **−0.77 stars** (95% CI −0.84 to −0.69).
+
+**Lateness and repeat purchase** ([04](notebooks/04_lateness_vs_repeat.ipynb))
+
+- Only 2.0% of customers buy again within 180 days.
+- Customers whose first order was late came back at 1.58% vs 2.01%
+  (−0.43 percentage points). Within the same state and month the gap is
+  −0.26 points (95% CI −0.69 to +0.16), which includes zero.
+- **Inconclusive:** repeat purchase is too rare in this data to detect a
+  small effect. The case for a late-delivery model therefore rests on
+  review scores.
+
+All of these are associations, not proof of cause: product, seller and price
+are not adjusted for.
 
 ## Model
 
@@ -90,6 +149,8 @@ docker exec -i olist-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 
 # 7. Create the analysis views (re-run after every load)
 docker exec -i olist-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < sql/01_order_delivery.sql
+docker exec -i olist-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < sql/02_order_outcomes.sql
+docker exec -i olist-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < sql/03_order_features.sql
 
 # 8. Open the notebooks in notebooks/ (in order) with the project's .venv kernel
 ```
