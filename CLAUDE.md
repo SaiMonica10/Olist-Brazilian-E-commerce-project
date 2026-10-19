@@ -67,11 +67,26 @@ The test for any feature: *could this value be computed at
 aggregates too — a seller's historical late rate must be computed from that
 seller's orders that were already completed before this order was placed.
 
-Column availability (to be filled in during EDA, by me):
+Column availability (drafted in Phase 3, to be reviewed by me):
 
 | Column | Known at purchase? | Notes |
 | ------ | ------------------ | ----- |
-|        |                    |       |
+| `orders.order_purchase_timestamp` | Yes | Defines "purchase time"; used for the time split, and month/day/hour features |
+| `orders.order_estimated_delivery_date` | Yes | Shown to the customer at checkout → `promised_days` |
+| `orders.order_approved_at` | No | Happens after purchase (boleto can take days) |
+| `orders.order_delivered_carrier_date` | No | Carrier handoff, after purchase |
+| `orders.order_delivered_customer_date` | No | This *is* the outcome (defines `is_late`) |
+| `orders.order_status` | No | Final status, recorded later |
+| `order_items.price`, `freight_value` | Yes | Shown in the basket |
+| `order_items.product_id`, `seller_id` | Yes | Chosen at checkout |
+| `order_items.shipping_limit_date` | No | Seller deadline, set ~6 days after approval |
+| `order_payments.payment_type`, `payment_installments` | Yes | Chosen at checkout |
+| `products.*` (category, weight, size) | Yes | Catalog attributes; assumed not to change over time |
+| `customers.customer_state`, `customer_zip_code_prefix` | Yes | Delivery address |
+| `sellers.seller_state`, `seller_zip_code_prefix` | Yes | Seller address |
+| `geolocation.*` | Yes | Static zip → coordinates → `distance_km` |
+| `order_reviews.*` | No | Written after (or during) delivery |
+| Seller's past late rate | Only if time-aware | Count only that seller's orders delivered *before* this purchase |
 
 ### 2. `customer_unique_id` identifies a real customer
 
@@ -97,9 +112,14 @@ a stated question keeps a notebook from sprawling.
 - `src/download_data.py` fetches the CSVs; `src/load_to_postgres.py` loads them.
   Both are safe to re-run.
 - `sql/00_sanity_checks.sql` verifies a load.
+- `sql/03_order_features.sql` builds the `order_features` materialized view;
+  re-run it after every load. `src/features.py` loads it for modeling.
 
 ## Phases
 
 - **Phase 0** — scaffolding, database, data load, sanity checks
+- **Phase 1** — EDA (notebooks 01–02)
+- **Phase 2** — measurement (notebooks 03–04)
+- **Phase 3** — purchase-time features (`sql/03_order_features.sql`, notebook 05)
 - Later phases (EDA, measurement, features, modeling, API, dashboard) are
   planned one at a time.
