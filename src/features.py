@@ -31,7 +31,8 @@ NUMERIC_FEATURES = [
     "purchase_dow",
     "purchase_hour",
     "seller_prior_orders",
-    "seller_prior_late",
+    # seller_prior_late is left out: it equals rate x orders, so it adds no
+    # information and would split SHAP credit (notebook 05, section 6).
     "seller_prior_late_rate",
 ]
 
