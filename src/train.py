@@ -12,8 +12,13 @@ Decisions:
       flattering. A model that guesses at random scores the late rate.
     * Ops view: precision and recall when the top 10% riskiest orders are
       flagged, assuming ops can only act on a limited number of orders.
+    * The LightGBM model is saved to models/ for the API. It is the model the
+      test scores describe (trained before Mar 2018), not a refit on all data.
 """
 
+from pathlib import Path
+
+import joblib
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
@@ -33,6 +38,8 @@ VALID_START = "2018-03-01"
 TEST_START = "2018-05-01"
 
 TOP_FRACTION = 0.10  # share of orders ops can review
+
+MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "late_risk_lgbm.joblib"
 
 
 def time_split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -122,6 +129,10 @@ def main() -> None:
 
     print("\nTest set (May - Aug 2018):")
     print(pd.DataFrame(results).T.round(3).to_string())
+
+    MODEL_PATH.parent.mkdir(exist_ok=True)
+    joblib.dump(lgbm, MODEL_PATH)
+    print(f"\nSaved LightGBM model to {MODEL_PATH.relative_to(MODEL_PATH.parent.parent)}")
 
 
 if __name__ == "__main__":

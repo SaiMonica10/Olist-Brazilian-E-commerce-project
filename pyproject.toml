@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Late-delivery risk analysis and prediction on the Olist e-commerce dataset"
 requires-python = ">=3.11"
 dependencies = [
+    "fastapi>=0.159.1",
     "ipykernel>=7.4.0",
     "kagglehub>=1.0.2",
     "lightgbm>=4.7.0",
@@ -16,4 +17,16 @@ dependencies = [
     "shap>=0.51.0",
     "sqlalchemy>=2.1.4",
     "statsmodels>=0.15.0",
+    "uvicorn>=0.54.0",
 ]
+
+[dependency-groups]
+dev = [
+    "httpx2>=2.16.0",
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+# Lets tests import the API as app.api, from the project root.
+pythonpath = ["."]
+testpaths = ["tests"]

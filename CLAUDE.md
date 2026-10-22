@@ -46,6 +46,7 @@ Add a dependency only in the phase that first uses it.
 | `notebooks/`       | Exploration only. No logic that other code depends on.       |
 | `sql/`             | Numbered `.sql` files (`00_`, `01_`, ...).                   |
 | `src/`             | Reusable, importable Python: loading, features, training.    |
+| `models/`          | Trained model files from `src/train.py`. Git-ignored.        |
 | `app/`             | FastAPI service and Streamlit dashboard (later phases).      |
 | `tests/`           | pytest tests for `src/` and `app/`.                          |
 | `reports/figures/` | Figures exported for the README and write-up.                |
@@ -121,5 +122,9 @@ a stated question keeps a notebook from sprawling.
 - **Phase 1** — EDA (notebooks 01–02)
 - **Phase 2** — measurement (notebooks 03–04)
 - **Phase 3** — purchase-time features (`sql/03_order_features.sql`, notebook 05)
+- **Phase 4** — modeling (`src/train.py`, notebook 06): time split, logistic
+  baseline vs LightGBM, SHAP. LightGBM kept, with the month feature.
+- **Phase 5** — prediction API (`app/`): FastAPI, takes the 21 features, loads
+  the model from `models/`
 - Later phases (EDA, measurement, features, modeling, API, dashboard) are
   planned one at a time.

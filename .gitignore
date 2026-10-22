@@ -4,6 +4,10 @@ data/raw/*
 data/processed/*
 !data/**/.gitkeep
 
+# Trained models: rebuilt by src/train.py.
+models/*
+!models/.gitkeep
+
 # Secrets
 .env
 
