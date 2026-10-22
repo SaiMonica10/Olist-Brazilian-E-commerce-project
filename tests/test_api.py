@@ -17,11 +17,11 @@ client = TestClient(app)
 # The riskiest order in the test set (notebook 06, section 4): scored 44.0%.
 RISKY_ORDER = {
     "promised_days": 19, "distance_km": 1968.3, "n_items": 1, "n_products": 1,
-    "n_sellers": 1, "total_price": 287.0, "total_freight": 26.36, "freight_ratio": 0.092,
+    "n_sellers": 1, "total_price": 287.0, "total_freight": 26.36,
     "total_weight_g": 650, "total_volume_cm3": 1188, "max_installments": 3,
     "purchase_month_of_year": 8, "purchase_dow": 4, "purchase_hour": 18,
     "seller_prior_orders": 21, "seller_prior_late_rate": 0.048,
-    "customer_state": "AL", "seller_state": "SP", "same_state": False,
+    "customer_state": "AL", "seller_state": "SP",
     "main_category": "health_beauty", "main_payment_type": "credit_card",
 }
 
@@ -50,12 +50,19 @@ def test_risky_order_matches_notebook():
 
 def test_safer_order_scores_lower():
     """Same order, but local delivery with a longer promise."""
-    safer = predict(customer_state="SP", same_state=True, distance_km=15, promised_days=30)
+    safer = predict(customer_state="SP", distance_km=15, promised_days=30)
     assert safer.json()["late_risk"] < predict().json()["late_risk"]
 
 
 def test_optional_fields_can_be_missing():
     response = predict(distance_km=None, seller_prior_late_rate=None, main_category=None)
+    assert response.status_code == 200
+    assert 0 <= response.json()["late_risk"] <= 1
+
+
+def test_zero_price_order_is_scored():
+    """freight_ratio cannot be computed (division by zero), so it is left missing."""
+    response = predict(total_price=0)
     assert response.status_code == 200
     assert 0 <= response.json()["late_risk"] <= 1
 

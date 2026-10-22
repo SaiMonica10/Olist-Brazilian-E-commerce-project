@@ -3,8 +3,8 @@
 How much do late deliveries hurt review scores and repeat purchases, and can we
 flag at-risk orders at the time of purchase so operations can intervene?
 
-> **Status:** Phases 0–2 complete (data load, EDA, measurement). Phase 3
-> (purchase-time features) in progress.
+> **Status:** Phases 0–5 complete (data load, EDA, measurement, features,
+> model, prediction API). Phase 6 (Streamlit dashboard) next.
 
 ## Problem
 
@@ -82,8 +82,17 @@ Data-quality issues that shaped the analysis
   sees the future; a brute-force recount on 500 random orders matched
   exactly. Post-purchase columns (approval, carrier and delivery dates,
   shipping deadline, reviews) are excluded.
-- **Modeling:**
-- **Serving:** FastAPI prediction API, Streamlit dashboard
+- **Modeling:** time-based split (train on purchases before Mar 2018,
+  validate on Mar–Apr 2018, test once on May–Aug 2018). A random-score
+  baseline, logistic regression and LightGBM are compared on average
+  precision (only ~7% of orders are late, so accuracy is not used) and on
+  precision/recall when the riskiest 10% of orders are flagged
+  ([`src/train.py`](src/train.py)). LightGBM is explained with SHAP
+  ([notebook 06](notebooks/06_model_explain.ipynb)).
+- **Serving:** FastAPI prediction API ([`app/api.py`](app/api.py)) that takes
+  an order's purchase-time features and returns its risk score, with input
+  checks and pytest tests. Features that can be derived (`same_state`,
+  `freight_ratio`) are computed by the API, so they can't contradict the input. Streamlit dashboard next.
 
 ## Findings
 
@@ -153,7 +162,19 @@ docker exec -i olist-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 docker exec -i olist-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < sql/03_order_features.sql
 
 # 8. Open the notebooks in notebooks/ (in order) with the project's .venv kernel
+
+# 9. Train and evaluate the models; saves models/late_risk_lgbm.joblib
+#    (notebook 06 and the API load this file)
+uv run python src/train.py
+
+# 10. Run the tests (no database needed, only the saved model)
+uv run pytest
+
+# 11. Start the prediction API, then open http://localhost:8000/docs
+uv run uvicorn app.api:app --reload
 ```
+
+On macOS, LightGBM needs OpenMP: `brew install libomp`.
 
 ## Project structure
 
@@ -163,6 +184,7 @@ data/processed/    Derived tables and feature sets (git-ignored)
 notebooks/         Numbered exploration notebooks
 sql/               Numbered SQL files
 src/               Reusable Python: download, load, features, training
+models/            Trained model saved by src/train.py (git-ignored)
 app/               FastAPI service and Streamlit dashboard
 tests/             pytest tests
 reports/figures/   Figures used in this README

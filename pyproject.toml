@@ -27,6 +27,6 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-# Lets tests import the API as app.api, from the project root.
-pythonpath = ["."]
+# Lets tests import the API as app.api and src/ modules by name (as scripts do).
+pythonpath = [".", "src"]
 testpaths = ["tests"]

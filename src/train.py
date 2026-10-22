@@ -7,6 +7,12 @@ Decisions:
     * Time-based split (notebook 02: lateness comes in bursts, and the model
       will score future orders). Train on the past, validate on the next
       months, test once on the most recent months.
+    * No gap between the splits. Training orders bought just before a cutoff
+      were delivered after it (6.4% of train), so their outcome was not yet
+      known at the cutoff. Checked: a 30-day gap gives the same test average
+      precision (0.093 vs 0.094), so the gap is left out.
+    * Known limitation: early stopping watches Mar-Apr 2018, a lateness burst
+      (11.8% late vs 6.6% in train), so the number of trees it picks is fragile.
     * Main metric: average precision (area under the precision-recall curve).
       Only ~7% of orders are late, so accuracy is useless and ROC-AUC looks
       flattering. A model that guesses at random scores the late rate.
