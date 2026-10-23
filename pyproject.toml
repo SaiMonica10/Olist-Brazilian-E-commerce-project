@@ -17,6 +17,7 @@ dependencies = [
     "shap>=0.51.0",
     "sqlalchemy>=2.1.4",
     "statsmodels>=0.15.0",
+    "streamlit>=1.66.1",
     "uvicorn>=0.54.0",
 ]
 
@@ -27,6 +28,6 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-# Lets tests import the API as app.api, from the project root.
-pythonpath = ["."]
+# Lets tests import the API as app.api and src/ modules by name (as scripts do).
+pythonpath = [".", "src"]
 testpaths = ["tests"]
