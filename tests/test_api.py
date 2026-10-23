@@ -11,19 +11,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api import app
+from predict import EXAMPLE_ORDER as RISKY_ORDER  # the riskiest test order, scored 44.0%
 
 client = TestClient(app)
-
-# The riskiest order in the test set (notebook 06, section 4): scored 44.0%.
-RISKY_ORDER = {
-    "promised_days": 19, "distance_km": 1968.3, "n_items": 1, "n_products": 1,
-    "n_sellers": 1, "total_price": 287.0, "total_freight": 26.36,
-    "total_weight_g": 650, "total_volume_cm3": 1188, "max_installments": 3,
-    "purchase_month_of_year": 8, "purchase_dow": 4, "purchase_hour": 18,
-    "seller_prior_orders": 21, "seller_prior_late_rate": 0.048,
-    "customer_state": "AL", "seller_state": "SP",
-    "main_category": "health_beauty", "main_payment_type": "credit_card",
-}
 
 
 def predict(**changes):

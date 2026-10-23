@@ -24,22 +24,16 @@ Decisions:
 
 import sys
 from pathlib import Path
-import joblib
-import pandas as pd
+
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 
 # app/ is not a package of src/, so add src/ to the import path.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from features import CATEGORICAL_FEATURES, NUMERIC_FEATURES  # noqa: E402
-from train import FEATURES, MODEL_PATH  # noqa: E402
+from predict import EXAMPLE_ORDER, build_features, known_values, score  # noqa: E402
 
-model = joblib.load(MODEL_PATH)
-
-# Category lists saved with the model, in CATEGORICAL_FEATURES order.
-KNOWN = dict(zip(CATEGORICAL_FEATURES, model.booster_.pandas_categorical))
-KNOWN["seller_state"] = KNOWN["customer_state"]  # customers cover all 27 states
+KNOWN = known_values()  # also loads the model at startup, not on the first request
 
 app = FastAPI(
     title="Olist late-delivery risk",
@@ -50,7 +44,7 @@ app = FastAPI(
 
 class Order(BaseModel):
     """The purchase-time features of one order (see sql/03_order_features.sql),
-    except same_state and freight_ratio, which predict() computes."""
+    except same_state and freight_ratio, which build_features() computes."""
 
     promised_days: float = Field(ge=0, description="Days between purchase and the promised delivery date")
     distance_km: float | None = Field(None, ge=0, description="Seller-to-customer distance")
@@ -80,15 +74,7 @@ class Order(BaseModel):
         return value
 
     # Shown as the ready-filled example on the /docs page: the riskiest test order.
-    model_config = {"json_schema_extra": {"examples": [{
-        "promised_days": 19, "distance_km": 1968.3, "n_items": 1, "n_products": 1,
-        "n_sellers": 1, "total_price": 287.0, "total_freight": 26.36,
-        "total_weight_g": 650, "total_volume_cm3": 1188, "max_installments": 3,
-        "purchase_month_of_year": 8, "purchase_dow": 4, "purchase_hour": 18,
-        "seller_prior_orders": 21, "seller_prior_late_rate": 0.048,
-        "customer_state": "AL", "seller_state": "SP",
-        "main_category": "health_beauty", "main_payment_type": "credit_card",
-    }]}}
+    model_config = {"json_schema_extra": {"examples": [EXAMPLE_ORDER]}}
 
 
 class Prediction(BaseModel):
@@ -116,15 +102,5 @@ def categories() -> dict[str, list[str]]:
 
 @app.post("/predict")
 def predict(order: Order) -> Prediction:
-    row = order.model_dump()
-    # Derived exactly as in sql/03_order_features.sql.
-    row["same_state"] = row["customer_state"] == row["seller_state"]
-    row["freight_ratio"] = (round(row["total_freight"] / row["total_price"], 3)
-                            if row["total_price"] > 0 else None)
-    X = pd.DataFrame([row])[FEATURES]
-    # Same types as load_features(); this also turns a missing (None) number into NaN.
-    X[NUMERIC_FEATURES] = X[NUMERIC_FEATURES].astype(float)
-    # LightGBM matches categories by name, using the list saved with the model.
-    X[CATEGORICAL_FEATURES] = X[CATEGORICAL_FEATURES].astype("category")
-    risk = model.predict_proba(X)[0, 1]
+    risk = score(build_features([order.model_dump()]))[0]
     return Prediction(late_risk=round(float(risk), 4))

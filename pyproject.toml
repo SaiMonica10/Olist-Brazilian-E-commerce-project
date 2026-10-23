@@ -17,6 +17,7 @@ dependencies = [
     "shap>=0.51.0",
     "sqlalchemy>=2.1.4",
     "statsmodels>=0.15.0",
+    "streamlit>=1.66.1",
     "uvicorn>=0.54.0",
 ]
 

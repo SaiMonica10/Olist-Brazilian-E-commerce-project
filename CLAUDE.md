@@ -118,6 +118,8 @@ a stated question keeps a notebook from sprawling.
 - `src/train.py` trains, evaluates and saves `models/late_risk_lgbm.joblib`;
   notebook 06 and `app/api.py` load that file. Re-run it after rebuilding
   `order_features`.
+- `src/predict.py` holds the scoring code (build features, load model, score)
+  shared by the API and the dashboard, so both always score the same way.
 - `uv run pytest` runs the tests (no database needed, only the saved model).
 
 ## Phases
@@ -130,5 +132,8 @@ a stated question keeps a notebook from sprawling.
   baseline vs LightGBM, SHAP. LightGBM kept, with the month feature.
 - **Phase 5** — prediction API (`app/`): FastAPI, takes 19 features and
   computes `same_state` and `freight_ratio` itself, loads the model from `models/`
+- **Phase 6** — Streamlit dashboard (`app/`): risk queue (replay a test-period
+  day, slider for the share ops can check), score-an-order form, model page.
+  Loads the model directly via `src/predict.py`; orders from `order_features`.
 - Later phases (EDA, measurement, features, modeling, API, dashboard) are
   planned one at a time.
