@@ -1,28 +1,50 @@
 # Olist Late-Delivery Risk
 
-How much do late deliveries hurt review scores and repeat purchases, and can we
-flag at-risk orders at the time of purchase so operations can intervene?
-
-> **Status:** Phases 0–5 complete (data load, EDA, measurement, features,
-> model, prediction API). Phase 6 (Streamlit dashboard) next.
+Measuring what late deliveries cost a Brazilian marketplace, and flagging
+risky orders at checkout so operations can act before the parcel is late.
 
 ## Problem
 
-<!-- TODO: 2-4 sentences in your own words. Who is the stakeholder (ops team)?
-     What decision would this project support? Why does it matter to Olist? -->
+Olist's operations team sees many 1-star reviews but cannot tell what drives
+them: a poor product, or a parcel that arrived after the promised date. They
+also cannot see which orders are heading for a late delivery until it has
+already happened, even though late deliveries cluster in certain periods
+(Nov 2017, Feb–Mar 2018). This project asks two questions:
 
-The project has two separate parts:
+1. **Measurement:** how much does late delivery hurt review scores and repeat
+   purchases? (Uses everything known after the order is complete.)
+2. **Prediction:** can an order's late-delivery risk be scored *at the moment
+   it is placed*, with reasons, so ops knows which orders to check first?
+   (Uses only information available at purchase time.)
 
-1. **Measurement:** how late delivery relates to review scores and repeat
-   purchase, using everything known after the order is complete.
-2. **Prediction:** a model that scores an order's late-delivery risk at the
-   moment it is placed, using only information available at purchase time.
+## Results at a glance
+
+- **Late orders get 2 stars fewer:** 2.27 vs 4.29 on average. Counting only
+  reviews written after the parcel arrived, the gap is still −0.77 stars
+  (95% CI −0.84 to −0.69).
+- **Repeat purchase: inconclusive.** Only 2% of customers buy again within
+  180 days, too few to detect a small effect of lateness.
+- **Flagging at checkout:** on the held-out months (May–Aug 2018), checking
+  the riskiest 10% of orders catches 26% of late orders, vs 11% for random
+  checks.
+- **But a simple lookup table does about as well:** across five test windows,
+  LightGBM ranks orders 1.64× better than random on average, and a
+  customer-state × promised-days table 1.65×. Both are reported below.
+- **Usable by ops:** a FastAPI prediction service and a Streamlit dashboard
+  that replays a past day, ranks its orders by risk and shows why each one
+  was flagged.
+
+![Risk queue dashboard: a day's orders ranked by late-delivery risk, with the reasons for the selected order](reports/figures/dashboard.png)
 
 ## Data
 
 [Olist Brazilian E-commerce Public Dataset](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce):
 about 100k orders from 2016 to 2018, made public by Olist, a Brazilian
-marketplace platform. It comes as 9 CSVs, loaded into PostgreSQL as these tables:
+marketplace platform. It comes as 9 CSVs, loaded into PostgreSQL 16 (Docker)
+and checked with [`sql/00_sanity_checks.sql`](sql/00_sanity_checks.sql).
+
+<details>
+<summary>Tables</summary>
 
 | Table | Rows | One row per |
 | ----- | ---: | ----------- |
@@ -36,65 +58,26 @@ marketplace platform. It comes as 9 CSVs, loaded into PostgreSQL as these tables
 | `geolocation` | 1,000,163 | zip prefix / coordinate pair (several per zip) |
 | `product_category_translation` | 71 | category (Portuguese → English) |
 
-Notes:
+</details>
 
-- `customer_id` is a new value for every order. The real customer is
-  `customer_unique_id`, and repeat-purchase analysis depends on it.
-- Raw tables mirror the CSVs exactly; data-quality checks are in
-  [`sql/00_sanity_checks.sql`](sql/00_sanity_checks.sql).
+Data decisions ([notebook 01](notebooks/01_data_overview.ipynb)):
 
-Data-quality issues that shaped the analysis
-([notebook 01](notebooks/01_data_overview.ipynb)):
-
-- **Scope:** lateness is measured on the 96,470 orders that are `delivered`
-  and have a delivery date (97% of orders).
-- **Period:** purchases from Jan 2017 to Aug 2018. 2016 is too sparse (one
-  month has no orders), and Sep–Oct 2018 has no delivered orders.
+- **Real customers:** `customer_id` is a new value for every order; the real
+  customer is `customer_unique_id`. Repeat-purchase analysis depends on it.
+- **Scope:** the 96,470 orders that are `delivered` and have a delivery date
+  (97% of orders).
+- **Period:** purchases from Jan 2017 to Aug 2018. 2016 is too sparse, and
+  Sep–Oct 2018 has no delivered orders.
 - **Out-of-order middle dates:** 1,373 delivered orders have approval or
   carrier dates out of order. They are kept, because purchase and delivery
   dates are always valid, so their late label is correct.
-- **Limitation:** most of the 1,107 `shipped` orders are old and were likely
-  never delivered. They are excluded, so measured lateness is slightly
-  optimistic.
-
-## Approach
-
-<!-- TODO: fill in phase by phase as each one is done. -->
-
-- **Phase 0:** Postgres in Docker, raw load, sanity checks
-- **EDA:** which orders to analyse and how lateness varies over time and by
-  state ([01](notebooks/01_data_overview.ipynb),
-  [02](notebooks/02_delivery_lateness.ipynb)). "Late" is defined once, in
-  [`sql/01_order_delivery.sql`](sql/01_order_delivery.sql): delivered on a
-  later date than the estimated date.
-- **Measurement:** late vs. on-time orders compared on review score and
-  180-day repeat purchase, with 95% confidence intervals, a regression that
-  adjusts for customer state and purchase month, and a robustness check
-  ([03](notebooks/03_lateness_vs_reviews.ipynb),
-  [04](notebooks/04_lateness_vs_repeat.ipynb)). Outcomes are built in
-  [`sql/02_order_outcomes.sql`](sql/02_order_outcomes.sql).
-- **Features and leakage control:** one row per order with features known at
-  purchase time: promised delivery days, seller–customer distance, states,
-  basket contents, payment type, purchase time, and the seller's past late
-  rate ([`sql/03_order_features.sql`](sql/03_order_features.sql),
-  [notebook 05](notebooks/05_features.ipynb)). The seller's history counts
-  only orders already delivered *before* the purchase, so the model never
-  sees the future; a brute-force recount on 500 random orders matched
-  exactly. Post-purchase columns (approval, carrier and delivery dates,
-  shipping deadline, reviews) are excluded.
-- **Modeling:** time-based split (train on purchases before Mar 2018,
-  validate on Mar–Apr 2018, test once on May–Aug 2018). A random-score
-  baseline, logistic regression and LightGBM are compared on average
-  precision (only ~7% of orders are late, so accuracy is not used) and on
-  precision/recall when the riskiest 10% of orders are flagged
-  ([`src/train.py`](src/train.py)). LightGBM is explained with SHAP
-  ([notebook 06](notebooks/06_model_explain.ipynb)).
-- **Serving:** FastAPI prediction API ([`app/api.py`](app/api.py)) that takes
-  an order's purchase-time features and returns its risk score, with input
-  checks and pytest tests. Features that can be derived (`same_state`,
-  `freight_ratio`) are computed by the API, so they can't contradict the input. Streamlit dashboard next.
 
 ## Findings
+
+Late vs. on-time orders are compared with 95% confidence intervals and a
+regression that adjusts for customer state and purchase month. Late is
+defined once, in [`sql/01_order_delivery.sql`](sql/01_order_delivery.sql):
+delivered on a later date than the estimated date.
 
 **How often orders are late** ([02](notebooks/02_delivery_lateness.ipynb))
 
@@ -124,13 +107,117 @@ Data-quality issues that shaped the analysis
   small effect. The case for a late-delivery model therefore rests on
   review scores.
 
-All of these are associations, not proof of cause: product, seller and price
-are not adjusted for.
-
 ## Model
 
-<!-- TODO: target definition, features, validation scheme (time-based split),
-     metrics vs. a baseline, SHAP drivers, how ops would use the score. -->
+**Target:** `is_late`, the same definition as above (6.6% of training
+orders).
+
+**Features: only what is known at purchase time** ([`sql/03_order_features.sql`](sql/03_order_features.sql),
+[notebook 05](notebooks/05_features.ipynb)). 21 features: promised delivery
+days, seller–customer distance, customer and seller state, basket (items,
+price, freight, weight, volume, category), payment type and installments,
+purchase month/day/hour, and the seller's history.
+
+- **Leakage control:** the seller's past late rate counts only that seller's
+  orders already delivered *before* this purchase. A brute-force recount on
+  500 random orders matched exactly.
+- Post-purchase columns (approval, carrier and delivery dates, shipping
+  deadline, reviews) are never used.
+
+**Validation: split by time, never at random** ([`src/train.py`](src/train.py)).
+The model must score future orders, and lateness comes in bursts, so a
+random split would let it learn from the future.
+
+| Part | Purchases | Orders | Late |
+| ---- | --------- | -----: | ---: |
+| Train | Jan 2017 – Feb 2018 | 57,050 | 6.6% |
+| Validation (early stopping) | Mar – Apr 2018 | 13,801 | 11.8% |
+| Test (used once) | May – Aug 2018 | 25,352 | 4.4% |
+
+**Metrics:** average precision (AP), because only ~7% of orders are late and
+accuracy would reward predicting "on time" for everything. A random ranking
+scores AP ≈ the late rate. Also: precision and recall when ops checks the
+riskiest 10% of orders.
+
+**Baselines:** random scores, logistic regression, and three rules ops could
+follow without a model, built from the model's top reasons. Each rule's late
+rates are learned from the training months only.
+
+**Test set (May–Aug 2018):**
+
+| Method | AP | Recall, top 10% | Precision, top 10% |
+| ------ | -: | --------------: | -----------------: |
+| Random | 0.046 | 11.1% | 4.9% |
+| Rule: riskiest customer state | 0.048 | 11.7% | 5.1% |
+| Rule: state × promised-days table | 0.064 | 17.7% | 7.8% |
+| Logistic regression | 0.074 | 19.7% | 8.7% |
+| LightGBM | 0.094 | 25.7% | 11.3% |
+| Rule: shortest promised delivery time | 0.099 | 29.1% | 12.8% |
+
+**Backtest across five windows.** One test window can mislead, so every
+method is retrained and scored on five consecutive windows (AP ÷ late rate,
+so 1.0 = random):
+
+| Method | Sep–Oct 17 | Nov–Dec 17 | Jan–Feb 18 | Mar–Apr 18 | May–Aug 18 | Mean |
+| ------ | ---------: | ---------: | ---------: | ---------: | ---------: | ---: |
+| LightGBM | 1.74 | 1.27 | 1.47 | 1.61 | 2.14 | 1.64 |
+| Rule: state × promised-days table | 1.65 | 1.45 | 1.64 | 2.05 | 1.46 | 1.65 |
+| Rule: riskiest customer state | 1.85 | 1.41 | 1.47 | 1.55 | 1.10 | 1.48 |
+| Rule: shortest promised delivery time | 1.12 | 0.92 | 0.99 | 0.92 | 2.26 | 1.24 |
+
+The shortest-promise rule tops the May–Aug test but is no better than
+random in three earlier windows, which shows why a single test window is
+not enough.
+
+**Why keep LightGBM?** Across five test windows it ranks orders about as well
+as a simple state × promised-days lookup table (mean 1.64× vs 1.65× better
+than random), not clearly better. It is kept because it can use many
+features at once (seller history, distance, basket) and gives per-order
+reasons, and it may improve more than a fixed table as data grows. That last
+point is a hypothesis: in this backtest, its lead over the table did not
+grow steadily with training size.
+
+**Explaining scores with SHAP** ([notebook 06](notebooks/06_model_explain.ipynb)):
+each order's score is split into per-feature pushes toward late or on time.
+The dashboard shows these as the order's "top reason" and waterfall chart.
+
+![SHAP feature importance](reports/figures/06_shap_importance.png)
+
+**How ops would use it:** each day, check the riskiest 10% of new orders
+first (for example, contact the seller or carrier). The share is a slider in
+the dashboard.
+
+**Serving:** a FastAPI service ([`app/api.py`](app/api.py)) takes an order's
+purchase-time details and returns its risk score, with input checks. The
+Streamlit dashboard ([`app/dashboard.py`](app/dashboard.py)) loads the same
+model through [`src/predict.py`](src/predict.py), so both score orders the
+same way. Both are covered by pytest tests.
+
+## Limitations
+
+- **Associations, not proof of cause.** The review and repeat-purchase gaps
+  adjust for state and month, but not for product, seller or price. So this
+  project cannot fully separate "bad product" from "late parcel" as the
+  reason for a bad review.
+- **Why lateness comes in bursts is not explained.** The data has no
+  carrier, warehouse or weather information, so the cause of the Nov 2017 and
+  Feb–Mar 2018 spikes cannot be tested here.
+- **Month feature kept, but uncertain.** `purchase_month_of_year` is the top
+  SHAP feature, but the data covers only 20 months, so each calendar month
+  appears once or twice. In the backtest, the model without it scored higher
+  in 4 of 5 windows. It was kept so the deployed model stays unchanged;
+  dropping it is the first thing to test with more data.
+- **Early stopping is fragile.** The validation months are a lateness burst
+  (11.8% late vs 6.6% in train), and the number of trees picked ranges from
+  15 to 111 across backtest windows.
+- **Each result is a single run** with one random seed; differences of about
+  0.1 in the backtest table may be noise.
+- **Scores run slightly high:** on test orders the model predicts 5.7% late
+  on average vs 4.4% actual, so a score is a ranking first and a probability
+  second.
+- **Excluded orders:** most of the 1,107 `shipped` orders are old and were
+  likely never delivered. They are excluded, so measured lateness is slightly
+  optimistic.
 
 ## How to run
 
@@ -163,8 +250,8 @@ docker exec -i olist-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 
 # 8. Open the notebooks in notebooks/ (in order) with the project's .venv kernel
 
-# 9. Train and evaluate the models; saves models/late_risk_lgbm.joblib
-#    (notebook 06 and the API load this file)
+# 9. Train and evaluate (baselines, LightGBM, backtest);
+#    saves models/late_risk_lgbm.joblib for notebook 06, the API and the dashboard
 uv run python src/train.py
 
 # 10. Run the tests (no database needed, only the saved model)
@@ -172,6 +259,9 @@ uv run pytest
 
 # 11. Start the prediction API, then open http://localhost:8000/docs
 uv run uvicorn app.api:app --reload
+
+# 12. Start the dashboard (needs the database running)
+uv run streamlit run app/dashboard.py
 ```
 
 On macOS, LightGBM needs OpenMP: `brew install libomp`.
@@ -181,9 +271,9 @@ On macOS, LightGBM needs OpenMP: `brew install libomp`.
 ```
 data/raw/          Kaggle CSVs as downloaded (git-ignored)
 data/processed/    Derived tables and feature sets (git-ignored)
-notebooks/         Numbered exploration notebooks
-sql/               Numbered SQL files
-src/               Reusable Python: download, load, features, training
+notebooks/         Numbered notebooks, one question each
+sql/               Numbered SQL files: delivery, outcomes, features
+src/               Reusable Python: download, load, features, training, scoring
 models/            Trained model saved by src/train.py (git-ignored)
 app/               FastAPI service and Streamlit dashboard
 tests/             pytest tests
