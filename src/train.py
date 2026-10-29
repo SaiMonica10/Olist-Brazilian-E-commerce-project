@@ -20,6 +20,12 @@ Decisions:
       flagged, assuming ops can only act on a limited number of orders.
     * The LightGBM model is saved to models/ for the API. It is the model the
       test scores describe (trained before Mar 2018), not a refit on all data.
+    * Simple rules as baselines: rules ops could follow without a model, built
+      from the two top SHAP reasons (promised days, customer state). Their
+      late-rate tables are learned from train only, the same data LightGBM
+      learns from.
+    * Walk-forward backtest: one test window can mislead (lateness comes in
+      bursts), so every method is also scored on five consecutive windows.
 """
 
 from pathlib import Path
@@ -45,6 +51,20 @@ TEST_START = "2018-05-01"
 
 TOP_FRACTION = 0.10  # share of orders ops can review
 
+# Backtest windows as (valid_start, test_start, test_end): train on everything
+# before valid_start, early-stop on valid, score on test. The last window is
+# the main split above; 2018-09-01 is just after the last purchase.
+BACKTEST_WINDOWS = [
+    ("2017-07-01", "2017-09-01", "2017-11-01"),
+    ("2017-09-01", "2017-11-01", "2018-01-01"),
+    ("2017-11-01", "2018-01-01", "2018-03-01"),
+    ("2018-01-01", "2018-03-01", "2018-05-01"),
+    (VALID_START, TEST_START, "2018-09-01"),
+]
+
+# Promised-days buckets for the state x promise rule (edges are inclusive on the right).
+PROMISE_BUCKETS = [-1, 14, 21, 28, 35, np.inf]
+
 MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "late_risk_lgbm.joblib"
 
 
@@ -55,6 +75,48 @@ def time_split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFra
     valid = df[(t >= VALID_START) & (t < TEST_START)]
     test = df[t >= TEST_START]
     return train, valid, test
+
+
+def backtest_splits(df: pd.DataFrame):
+    """Yield (window label, train, valid, test) for each backtest window."""
+    t = df[TIME_COLUMN]
+    for valid_start, test_start, test_end in BACKTEST_WINDOWS:
+        label = f"{test_start[:7]}..{pd.Timestamp(test_end) - pd.Timedelta(days=1):%Y-%m}"
+        yield (label, df[t < valid_start], df[(t >= valid_start) & (t < test_start)],
+               df[(t >= test_start) & (t < test_end)])
+
+
+def simple_rules(train: pd.DataFrame, test: pd.DataFrame) -> dict[str, pd.Series]:
+    """Risk scores from rules of thumb (higher = riskier), learned from train only."""
+    def with_bucket(d):
+        return d.assign(promise_bucket=pd.cut(d["promised_days"], PROMISE_BUCKETS))
+
+    train, test = with_bucket(train), with_bucket(test)
+
+    def past_late_rate(columns):
+        rates = train.groupby(columns, observed=True)[TARGET].mean().rename("rate")
+        return test.join(rates, on=columns)["rate"].astype(float)
+
+    # A state or state x bucket not seen in training falls back to the broader rate.
+    state = past_late_rate(["customer_state"]).fillna(train[TARGET].mean())
+    return {
+        "rule: shortest promise": -test["promised_days"],
+        "rule: riskiest state": state,
+        "rule: state x promise table": past_late_rate(["customer_state", "promise_bucket"]).fillna(state),
+    }
+
+
+def backtest(df: pd.DataFrame) -> pd.DataFrame:
+    """Score the simple rules and LightGBM on every backtest window."""
+    rows = []
+    for window, train, valid, test in backtest_splits(df):
+        scores = simple_rules(train, test)
+        scores["lightgbm"] = fit_lightgbm(train, valid).predict_proba(test[FEATURES])[:, 1]
+        for method, s in scores.items():
+            rows.append({"window": window, "method": method, **evaluate(test[TARGET], s)})
+    result = pd.DataFrame(rows)
+    result["ap_vs_random"] = result["avg_precision"] / result["late_rate"]
+    return result
 
 
 def evaluate(y_true, scores, top_fraction: float = TOP_FRACTION) -> dict:
@@ -125,6 +187,8 @@ def main() -> None:
               f"{part[TIME_COLUMN].min():%Y-%m} to {part[TIME_COLUMN].max():%Y-%m}")
 
     results = {"random guess": evaluate(test[TARGET], np.random.default_rng(42).random(len(test)))}
+    for name, scores in simple_rules(train, test).items():
+        results[name] = evaluate(test[TARGET], scores)
 
     logistic = build_logistic().fit(train[FEATURES], train[TARGET])
     results["logistic regression"] = evaluate(test[TARGET], logistic.predict_proba(test[FEATURES])[:, 1])
@@ -135,6 +199,13 @@ def main() -> None:
 
     print("\nTest set (May - Aug 2018):")
     print(pd.DataFrame(results).T.round(3).to_string())
+
+    print("\nBacktest (each column is a test window; mean is across windows):")
+    bt = backtest(df)
+    for metric in ["ap_vs_random", f"recall_top{TOP_FRACTION:.0%}"]:
+        table = bt.pivot(index="method", columns="window", values=metric)
+        table["mean"] = table.mean(axis=1)
+        print(f"\n{metric}:\n{table.round(3).to_string()}")
 
     MODEL_PATH.parent.mkdir(exist_ok=True)
     joblib.dump(lgbm, MODEL_PATH)

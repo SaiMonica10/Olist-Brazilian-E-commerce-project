@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from features import TARGET, TIME_COLUMN
-from train import TEST_START, VALID_START, evaluate, time_split
+from train import TEST_START, VALID_START, backtest_splits, evaluate, simple_rules, time_split
 
 
 def test_time_split_keeps_the_future_out_of_training():
@@ -45,3 +45,49 @@ def test_evaluate_perfect_and_random_scores():
     assert perfect["avg_precision"] == pytest.approx(1.0)
     # A random ranking scores about the late rate (why we compare to 0.046).
     assert random["avg_precision"] == pytest.approx(y.mean(), abs=0.02)
+
+
+def test_backtest_splits_never_train_on_the_future():
+    times = pd.date_range("2017-01-01", "2018-08-31", freq="D")
+    df = pd.DataFrame({TIME_COLUMN: times, TARGET: 0})
+
+    splits = list(backtest_splits(df))
+
+    assert len(splits) == 5
+    for _, train, valid, test in splits:
+        assert train[TIME_COLUMN].max() < valid[TIME_COLUMN].min()
+        assert valid[TIME_COLUMN].max() < test[TIME_COLUMN].min()
+    # The last window is the main split.
+    _, train, valid, test = splits[-1]
+    main = time_split(df)
+    assert [len(train), len(valid), len(test)] == [len(part) for part in main]
+
+
+def _orders(states, promised_days, late):
+    return pd.DataFrame({"customer_state": pd.Categorical(states, categories=["SP", "RJ", "AL"]),
+                         "promised_days": promised_days, TARGET: late})
+
+
+def test_simple_rules_by_hand():
+    # SP: 1 of 4 late (25%), all with long promises. RJ: 2 of 2 late (100%), short promises.
+    train = _orders(["SP"] * 4 + ["RJ"] * 2, [30, 30, 30, 30, 10, 10], [1, 0, 0, 0, 1, 1])
+    test = _orders(["SP", "RJ", "AL", "SP"], [30, 10, 20, 10], [0, 0, 0, 0])
+
+    rules = simple_rules(train, test)
+
+    assert list(rules["rule: shortest promise"]) == [-30, -10, -20, -10]
+    # AL never appears in training, so it gets the overall late rate (3 of 6).
+    assert list(rules["rule: riskiest state"]) == pytest.approx([0.25, 1.0, 0.5, 0.25])
+    # SP with a short promise was never seen, so it falls back to SP's rate.
+    assert list(rules["rule: state x promise table"]) == pytest.approx([0.25, 1.0, 0.5, 0.25])
+
+
+def test_simple_rules_ignore_test_outcomes():
+    train = _orders(["SP", "RJ"], [30, 10], [0, 1])
+    test = _orders(["SP", "RJ"], [30, 10], [0, 0])
+
+    before = simple_rules(train, test)
+    after = simple_rules(train, test.assign(**{TARGET: [1, 1]}))
+
+    for name in before:
+        pd.testing.assert_series_equal(before[name], after[name])
